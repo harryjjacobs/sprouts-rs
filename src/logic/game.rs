@@ -1,4 +1,4 @@
-use std::collections::{hash_map::RandomState, HashSet};
+use std::collections::HashSet;
 
 use crate::logic::graph::{Graph, GraphLoop};
 
@@ -118,7 +118,7 @@ impl Game {
             }
         }
 
-        let polygons = self.get_polygons();
+        let polygons = self.get_loops();
 
         let smallest_enclosing_polygon = |n: usize| {
             let mut smallest_polygon: Option<&GraphLoop> = None;
@@ -171,48 +171,49 @@ impl Game {
         return true;
     }
 
-    fn get_polygons(&self) -> Vec<GraphLoop> {
-        let mut polygons: Vec<GraphLoop> = vec![];
+    fn get_loops(&self) -> Vec<GraphLoop> {
+        let mut graph_loops: Vec<GraphLoop> = vec![];
 
         // iterate over each node and find loops
         for n in self.get_nodes().iter() {
             println!("{}'s neighbours: {:?}", n, self.graph.neighbours(*n));
-            self.get_polygons_recursive(
-                &mut polygons,
+            self.get_loops_recursive(
+                &mut graph_loops,
                 &mut GraphLoop::from(vec![*n]),
                 &mut HashSet::new(),
             );
         }
 
         // remove duplicates
-        let unique_polygons: HashSet<GraphLoop> = HashSet::from_iter(polygons);
+        let unique_graph_loops: HashSet<GraphLoop> = HashSet::from_iter(graph_loops);
 
-        for p in unique_polygons.iter() {
+        // TODO: just for debugging. remove me
+        for p in unique_graph_loops.iter() {
             println!("{:?}", p);
         }
 
-        return unique_polygons.into_iter().collect::<Vec<GraphLoop>>();
+        return unique_graph_loops.into_iter().collect::<Vec<GraphLoop>>();
     }
 
-    fn get_polygons_recursive(
+    fn get_loops_recursive(
         &self,
-        polygons: &mut Vec<GraphLoop>,
-        polygon: &mut GraphLoop,
+        loops: &mut Vec<GraphLoop>,
+        current_loop: &mut GraphLoop,
         visited: &mut HashSet<usize>,
     ) {
-        let current = *polygon.last().unwrap();
+        let current = *current_loop.last().unwrap();
         println!("Visiting node {}", current);
         visited.insert(current);
         for neighbour in self.graph.neighbours(current) {
             println!("Found neighbour {}", neighbour);
             if !visited.contains(neighbour) {
-                let mut new_polygon = polygon.clone();
-                new_polygon.push(*neighbour);
-                self.get_polygons_recursive(polygons, &mut new_polygon, visited);
-            } else if *polygon.first().unwrap() == *neighbour && polygon.len() >= 3 {
+                let mut new_loop = current_loop.clone();
+                new_loop.push(*neighbour);
+                self.get_loops_recursive(loops, &mut new_loop, visited);
+            } else if *current_loop.first().unwrap() == *neighbour && current_loop.len() >= 3 {
                 // loop complete.
-                polygons.push(polygon.clone());
-                println!("Loop found: {:?}", polygon);
+                loops.push(current_loop.clone());
+                println!("Loop found: {:?}", current_loop);
                 break;
             } else {
                 println!("Ignoring neighbour (already seen)");
