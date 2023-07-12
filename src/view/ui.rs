@@ -1,4 +1,4 @@
-use crate::logic::game::Game;
+use crate::logic::game::{Game, GameState};
 use log::warn;
 use once_cell::sync::Lazy;
 use sdl2::event::Event;
@@ -79,6 +79,10 @@ impl UI {
     }
 
     pub fn process(&mut self, event: Event, game: &mut Game) {
+        if !matches!(game.state, GameState::ACTIVE) {
+            return;
+        }
+
         match event {
             Event::MouseButtonDown {
                 x, y, mouse_btn, ..
@@ -108,7 +112,7 @@ impl UI {
                                 // end turn
                                 game.end_turn(
                                     |node, polygon| self.point_in_polygon(&node, &polygon),
-                                    |nodes| self.loop_bounds(&nodes),
+                                    |nodes| self.point_bounds(&nodes),
                                 )
                             }
                         }
@@ -314,7 +318,7 @@ impl UI {
     /// for edges, just the smalest box that can fit around the points
     /// Its used to check whether a loop in the graph could fit inside
     /// another one, when finding the smallest enclosing polygon of a point
-    fn loop_bounds(&self, nodes: &Vec<usize>) -> Rect {
+    fn point_bounds(&self, nodes: &Vec<usize>) -> Rect {
         let points_vec = nodes
             .iter()
             .map(|n| self.nodes.get(n).unwrap().pos)
