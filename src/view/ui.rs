@@ -1,11 +1,12 @@
 use crate::logic::game::{Game, GameState};
+use crate::view::utils::{edges_intersect, TextRendering};
 use log::warn;
 use once_cell::sync::Lazy;
 use sdl2::event::Event;
 use sdl2::pixels::Color;
 use sdl2::rect::{Point, Rect};
-use sdl2::render::{Canvas, TextureQuery};
-use sdl2::ttf::{Font, Sdl2TtfContext};
+use sdl2::render::Canvas;
+use sdl2::ttf::Sdl2TtfContext;
 use sdl2::video::Window;
 use sdl2::{gfx::primitives::DrawRenderer, mouse::MouseButton};
 use std::cmp::min;
@@ -14,6 +15,8 @@ use std::f32::consts::PI;
 use std::vec::Vec;
 
 const NODE_RADIUS: i32 = 15;
+// min squared distance between segments on an edge
+const MIN_EDGE_SEGMENT_DISTANCE: i32 = 100;
 
 static TTF_CONTEXT: Lazy<Sdl2TtfContext> =
     Lazy::new(|| return sdl2::ttf::init().map_err(|e| e.to_string()).unwrap());
@@ -89,10 +92,11 @@ impl UI {
             } => {
                 if mouse_btn == MouseButton::Left {
                     if let Some(node) = self.find_node_at(x, y) {
+                        let node_pos = self.nodes.get(&node).unwrap().pos;
                         if !self.drawing {
                             self.drawing = true;
                             self.drawing_start = node;
-                            self.drawing_edge.push(Point::new(x, y));
+                            self.drawing_edge.push(Point::new(node_pos.x, node_pos.y));
                         }
                     } else {
                         self.drawing = false;
@@ -104,10 +108,13 @@ impl UI {
             } => {
                 if mouse_btn == MouseButton::Left {
                     if let Some(node) = self.find_node_at(x, y) {
+                        let node_pos = self.nodes.get(&node).unwrap().pos;
                         if self.drawing {
                             if let Some(new_node) = game.do_turn(self.drawing_start, node) {
+                                self.drawing_edge.last_mut().unwrap().x = node_pos.x;
+                                self.drawing_edge.last_mut().unwrap().y = node_pos.y;
                                 self.edges.push(self.drawing_edge.clone());
-                                let new_pos = self.bisect_pos(&self.drawing_edge);
+                                let new_pos = Self::bisect_pos(&self.drawing_edge);
                                 self.nodes.insert(new_node, UINode::at_position(new_pos));
                                 // end turn
                                 game.end_turn(
@@ -136,8 +143,10 @@ impl UI {
                 }
                 // update edge path
                 if self.drawing {
-                    self.drawing_edge.push(self.mouse_pos);
-                    Self::refine_edge(&mut self.drawing_edge);
+                    if self.can_add_to_edge(&self.mouse_pos) {
+                        self.drawing_edge.push(self.mouse_pos);
+                        // Self::refine_edge(&mut self.drawing_edge);
+                    }
                 }
             }
             _ => {}
@@ -178,7 +187,7 @@ impl UI {
                     start_pos.y as i16,
                     end_pos.x as i16,
                     end_pos.y as i16,
-                    8,
+                    5,
                     Color::RGB(0, 0, 0),
                 );
             }
@@ -221,8 +230,42 @@ impl UI {
         }
     }
 
-    fn bisect_pos(&self, edge: &Vec<Point>) -> Point {
-        // TODO: edges won't always be straight lines
+    fn can_add_to_edge(&self, b: &Point) -> bool {
+        if self.drawing_edge.is_empty() {
+            return true;
+        }
+        let mut a = self.drawing_edge.last().unwrap().clone();
+        if (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) < MIN_EDGE_SEGMENT_DISTANCE {
+            return false;
+        }
+        // shift first point along direction of edge by unit amount, to avoid collision with sibling
+        // edges originating from same node
+        // TODO: this doesn't work very well. find another way. maybe edges should originate from edge of node
+        // and collision check with node should occur?
+        if self.drawing_edge.len() == 1 {
+            let mut dir_x = b.x - a.x;
+            if b.x - a.x > 0 {
+                dir_x /= (b.x - a.x).abs();
+            }
+            let mut dir_y = b.y - a.y;
+            if b.y - a.y > 0 {
+                dir_y /= (b.y - a.y).abs();
+            }
+            a.x += dir_x;
+            a.x += dir_y
+        }
+        for segments in self.edges.iter() {
+            for i in 1..segments.len() {
+                if edges_intersect(&segments[i - 1], &segments[i], &a, b) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    fn bisect_pos(edge: &Vec<Point>) -> Point {
+        // TODO: find a better method of finding the midpoint
         return edge[edge.len() / 2];
     }
 
@@ -272,11 +315,15 @@ impl UI {
         // }
     }
 
+    /// calculates the euclidean distance between a and b
     fn point_distance(a: &Point, b: &Point) -> i32 {
         return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
     }
 
-    // https://web.archive.org/web/20130126163405/http://geomalgorithms.com/a03-_inclusion.html
+    /// TODO: this is potentially broken by recent changes to the way edges are drawn
+    /// determines whether a point lies within a polygon defined by it's nodes and
+    /// the edges drawn between them, using the winding method
+    /// https://web.archive.org/web/20130126163405/http://geomalgorithms.com/a03-_inclusion.html
     fn point_in_polygon(&self, point: &usize, polygon: &Vec<usize>) -> bool {
         // winding number method
         let mut wn = 0;
@@ -304,6 +351,7 @@ impl UI {
                 }
             }
         }
+        println!("WN: {:?}", wn);
         return wn != 0;
     }
 
@@ -325,35 +373,5 @@ impl UI {
             .collect::<Vec<Point>>();
         let points = points_vec.as_slice().try_into().unwrap();
         return Rect::from_enclose_points(points, None).unwrap();
-    }
-}
-
-trait TextRendering {
-    fn render_text(&mut self, font: &Font, text: String, position: Point, color: Color);
-}
-
-impl TextRendering for Canvas<Window> {
-    fn render_text(&mut self, font: &Font, text: String, position: Point, color: Color) {
-        // render a surface, and convert it to a texture bound to the canvas
-        let surface = font
-            .render(&text)
-            .blended(Color::RGBA(255, 0, 0, 255))
-            .map_err(|e| e.to_string())
-            .unwrap();
-        let texture_creator = self.texture_creator();
-        let texture = texture_creator
-            .create_texture_from_surface(&surface)
-            .map_err(|e| e.to_string())
-            .unwrap();
-
-        self.set_draw_color(color);
-
-        let TextureQuery { width, height, .. } = texture.query();
-
-        let target = Rect::from_center(position, width, height);
-
-        self.copy(&texture, None, Some(target))
-            .map_err(|e| e.to_string())
-            .unwrap();
     }
 }
